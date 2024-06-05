@@ -1,0 +1,109 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Jul  6 14:56:38 2022
+
+@author: dogiv
+
+Input 5th and 95th percent confidence intervals, and this will fit a
+beta distribution to it. 
+Can also construct a beta dist from a lognormal (mean and error factor).
+"""
+import numpy as np
+import scipy.stats.distributions as dis
+
+def lognorm_from_conf(fifth, ninetyfifth):
+  n5 = np.log(fifth)
+  n95 = np.log(ninetyfifth)
+  #params of related normal distribution
+  μ = (n5 + n95)/2
+  σ = (n95 - μ) / 1.64486
+  scl = np.exp(μ)
+  return dis.lognorm(σ, scale=scl)
+
+def lognorm_from_mean_EF(mean, error_factor):
+  σ = np.log(error_factor) / 1.64486
+  μ = np.log(mean) - σ**2/2
+  return dis.lognorm(σ, scale=np.exp(μ))
+
+def beta_from_conf(fifth, ninetyfifth):
+  #mu = np.exp(np.log(fifth)/2 + np.log(ninetyfifth)/2)
+  mu = (fifth+ninetyfifth)/2
+  #ef = np.sqrt(ninetyfifth/fifth)
+  stdev = (ninetyfifth-fifth)/(1.64486*2) # if it's normal, which it's not
+  aplusb = mu*(1-mu)/stdev**2
+  a = mu*(aplusb)
+  b = (1-mu)*(aplusb)
+  beta = dis.beta(a,b)
+  
+  #outof = 40 / ef
+  #b = dis.beta(mu*outof, (1-mu)*outof)
+  i0,i1 = beta.interval(0.9)
+  tol = 0.01
+  i = 0
+  while np.abs(i0-fifth) > fifth*tol or np.abs(i1-ninetyfifth) > ninetyfifth*tol:
+    mu += (ninetyfifth-i1)/10 + (fifth-i0)/10
+    stdev += ((ninetyfifth - fifth) - (i1-i0))/(1.64486*2)/10
+    aplusb = mu*(1-mu)/stdev**2
+    a = mu*(aplusb)
+    b = (1-mu)*(aplusb)
+    beta = dis.beta(a,b)
+    i0,i1 = beta.interval(0.9)
+    #print(a, b, i0, i1)
+    i += 1
+    if i > 1000:
+      print("Failed to converge, solution is approximate:", i0, i1)
+      break
+  
+  print(a, b, i0, i1)
+  return beta
+
+def beta_from_mean(mu, nu): # nu is alpha + beta
+  alpha = mu*nu
+  beta = (1-mu)*nu
+  d = dis.beta(alpha, beta)
+  fifth, ninetyfifth = d.interval(0.9)
+  print("EF =", np.sqrt(ninetyfifth/fifth))
+  return d
+
+
+def beta_from_mean_EF(mu, EF):
+  errorfactor = EF + 0.01
+  nu = 1
+  learning_rate = 0.05
+  i = 0
+  while np.abs(EF-errorfactor) > 0.001:
+    i += 1
+    nu -= min(1, max(-1, learning_rate*(EF-errorfactor)))
+    learning_rate *= 0.99
+    fifth, ninetyfifth = beta_from_mean(mu, nu).interval(0.9)
+    errorfactor = np.sqrt(ninetyfifth / fifth)
+    if i > 1000: 
+      print("Failed to converge on error factor.")
+      break
+  return beta_from_mean(mu, nu)
+
+import matplotlib.pyplot as plt
+#x = np.linspace(0,0.04,2000)
+x = np.logspace(-7,0,100)
+
+dln = lognorm_from_mean_EF(0.0361, 40.7)
+yln = dln.cdf(x); plt.plot(x,yln)
+
+db = beta_from_conf(*dln.interval(0.9))
+yb = db.cdf(x); plt.plot(x,yb)
+
+#db2 = dis.beta(0.5618, 15)
+#db2 = beta_from_mean(0.0361, 12.51124)
+db2 = beta_from_mean_EF(0.0361, 40.7)
+yb2 = db2.cdf(x); plt.plot(x,yb2)
+print(db2.mean(), db2.interval(0.9))
+
+#dl2 = lognorm_from_conf(*dln.interval(0.9))
+#yl2 = dl2.pdf(x); plt.plot(x,yl2)
+
+plt.xscale("log")
+plt.hlines(0.05, 0, 1, color="black")
+plt.hlines(0.95, 0, 1, color="black")
+plt.vlines(dln.mean(),0.8,0.9,color="blue")
+plt.vlines(db.mean(),0.65,0.75, color="orange")
+plt.vlines(db2.mean(),0.6,0.7,color="green")
